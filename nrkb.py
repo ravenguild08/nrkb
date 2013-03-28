@@ -37,6 +37,7 @@ WATER = nrkb_logic.WATER
 ISLAND = nrkb_logic.ISLAND
 BLANK = nrkb_logic.BLANK
 INFER = nrkb_logic.INFER
+GameState = nrkb_logic.GameState
 
 class BoundsError(Exception):
   def __init__(self, value):
@@ -300,7 +301,7 @@ class NrkbController(wx.Frame):
 - The black squares will form the stream, or "nurikabe", which come together to form a single polymino, which must not contain any 2x2 "puddles".
 Left click on a square to color it black. Right click to mark it with a dot, which colors it white. Click and drag to mark more than one square.
 """, 'Nurikabe Instructions', wx.OK | wx.ICON_INFORMATION)
-  # displays
+  # displays about dialog
   def OnAbout(self, event):
     info = wx.AboutDialogInfo()
     #info.SetIcon(wx.Icon('xxx.png', wx.BITMAP_TYPE_PNG))
@@ -313,12 +314,11 @@ Left click on a square to color it black. Right click to mark it with a dot, whi
     wx.AboutBox(info)
   # called every tenth second, asks status to be updated
   def OnTimer(self, event):
-    self.elapsed += 1
     self.updateStatus()
 
   # this function is called all the time, every tenth second and after every interaction
   def updateStatus(self):
-    if self.done():
+    if self.gameState == GameState.SOLVED:
       self.timer.Stop()
     time_str = str(round(time.time() - self.start, 1))
     state_str = str(self.gameState)
@@ -332,8 +332,28 @@ Left click on a square to color it black. Right click to mark it with a dot, whi
     self.SetAutoLayout(True)
     self.Layout()
   # check stores the result in self.gameState
-  def done(self):
-    return self.gameState == nrkb_logic.GameState.SOLVED
+  def locked(self):
+    return self.gameState == GameState.SOLVED or self.grid.solving
+
+  # functions that the view calls. changeGame() interacts with the game
+  def fetchGame(self, coords):
+    return self.game.getState(coords)
+  def changeGame(self, coords, state):
+    if self.gameState != GameState.SOLVED:
+      changed = self.game.setState(coords, state)
+      if changed: 
+        self.board.drawSquare(coords, state, False)
+  # TODO: deprecate, and have check pass back a flag matrix instead
+  def flagGame(self, coords, state):
+    self.board.drawSquare(coords, state, True)
+
+  # when passed a game, updates the owned game to become the other. called by the model
+  def updateGame(self, game = None):
+    if game:
+      for y in range(self.rows):
+        for x in range(self.cols):
+          self.game.board[y][x] = game.board[y][x]
+    self.board.drawBoard()
 
   # only functions that interact with the game or grid
   def newGame(self, index = -1):
@@ -341,7 +361,7 @@ Left click on a square to color it black. Right click to mark it with a dot, whi
       self.stopSolveGame()
     self.game = nrkb_logic.Game(self.rows, self.cols, index)
     self.grid = nrkb_logic.Grid(self.game)
-    self.gameState = self.grid.check()
+    self.gameState = GameState.OKAY
     # if requesting a new board size, destroy old UI
     if self.rows != self.board.rows or self.cols != self.board.cols:
       self.board.Destroy()
@@ -349,30 +369,10 @@ Left click on a square to color it black. Right click to mark it with a dot, whi
       self.resize()
     else:
       self.board.drawBoard()
-    game_str = 'nrkb ' + str(self.game.rows) + 'x' + str(self.game.cols) + ' #' + str(self.game.index)
-    self.SetTitle(game_str)
-    self.timer.Stop()
-    self.elapsed = 0
+    self.SetTitle('nrkb ' + str(self.game.rows) + 'x' + str(self.game.cols) + ' #' + str(self.game.index))
     self.start = time.time()
-    self.timer.Start(100)  
+    self.timer.Start(100)
     self.updateStatus()
-  def fetchGame(self, coords):
-    return self.game.getState(coords)
-  def changeGame(self, coords, state):
-    if not self.done():
-      changed = self.game.setState(coords, state)
-      if changed: 
-        self.board.drawSquare(coords, state, False)
-  # TODO: deprecate, and have check pass back a flag matrix instead
-  def flagGame(self, coords, state):
-    self.board.drawSquare(coords, state, True)
-  # when passed a game, updates the owned game to become the other
-  def updateGame(self, game = None):
-    if game:
-      for y in range(self.rows):
-        for x in range(self.cols):
-          self.game.board[y][x] = game.board[y][x]
-    self.board.drawBoard()
   def clearGame(self):
     self.stopSolveGame()
     self.game.clear()
@@ -382,14 +382,15 @@ Left click on a square to color it black. Right click to mark it with a dot, whi
     if not self.timer.IsRunning():
       self.timer.Start()
   def checkGame(self):
-    if not self.done() and not self.grid.solving:
-      if self.gameState == nrkb_logic.GameState.ERROR:
-        self.board.drawBoard()      
-      self.grid.copy_game(self.game)
-      # TODO: have check pass back a gameState and a flag matrix, then draw here
-      self.gameState = self.grid.check(self)
+    if self.locked():
+      return
+    if self.gameState == GameState.ERROR:
+      self.board.drawBoard()      
+    self.grid.copy_game(self.game)
+    # TODO: have check pass back a gameState and a flag matrix, then draw here
+    self.gameState = self.grid.check(self)
   def startSolveGame(self):
-    if self.done() or self.grid.solving:
+    if self.locked():
       return
     if not self.board.locked:
       wx.BeginBusyCursor()
