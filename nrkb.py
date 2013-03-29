@@ -3,27 +3,16 @@
 """
 nrkb.py
 peter hung | phung@post.harvard.edu
-2013-3-18 | 3-27
+ 2013-3-18 | 3-29
 
-implements an nurikabe UI with wx python. the view and the controller are included here
+implements nurikabe view and controller with wxPython
 
-
-the view handles mouse events and requests and recieves changes from the controller
-class NrkbBoard:
-  drawSquare((x, y), state, flagged)
-  drawBoard(game)
-
-class NrkbController: 
-  it owns:
-  - NrkbBoard to show stuff
-  - Game where it saves all the info
-  - Grid which it invokes to check() and solve()
-
-  changeGame((x, y), state)
-  fetchGame((x, y))
-
-TODO: change timer so that it uses time.time() instead
-TODO: change how grid.check() is called so that it's universal
+NrkbBoard handles mouse events and requests and recieves changes from the controller
+NrkbController has
+- NrkbBoard that it receives requests and pushes updates to
+- a Game, which is pretty much an array that stores stuff
+- a Grid, that invokes check() and solve(), both which are able
+  receives requests and pushes updates to its 
 """
 
 import wx
@@ -217,8 +206,8 @@ class HighScores(wx.Dialog):
         datet = wx.StaticText(self, label = time.strftime('%c', time.localtime(date)))
       else:
         scoret = wx.StaticText(self, label = '--:--.--')
-        usert = wx.StaticText(self, label = '--')
-        datet = wx.StaticText(self, label = 'not completed yet!')
+        usert = wx.StaticText(self, label = '')
+        datet = wx.StaticText(self, label = '')
       fgs.AddMany([sizet, scoret, usert, datet])
 
     okb = wx.Button(self, id = wx.ID_OK, label = 'OK')
@@ -229,7 +218,7 @@ class HighScores(wx.Dialog):
     hbox.Add(okb, flag = wx.RIGHT | wx.ALIGN_CENTER, border = 20)
     hbox.Add(clearb, flag = wx.LEFT | wx.ALIGN_CENTER, border = 20)
     vbox.Add(fgs, flag = wx.ALL | wx.ALIGN_CENTER_HORIZONTAL, border = 15)
-    vbox.Add(wx.StaticLine(self, -1, size = (250, 1), style = wx.LI_HORIZONTAL), flag = wx.ALIGN_CENTER)
+    vbox.Add(wx.StaticLine(self, -1, size = (300, 1), style = wx.LI_HORIZONTAL), flag = wx.ALIGN_CENTER)
     vbox.Add(hbox, flag = wx.ALL | wx.ALIGN_CENTER, border = 15)
     self.SetSizer(vbox)
     self.Layout()
@@ -277,8 +266,8 @@ class NrkbController(wx.Frame):
     abouti = helpMenu.Append(wx.ID_ABOUT, '&About', 'About Nurikabe')
     helpMenu.AppendSeparator()
     refreshi = fileMenu.Append(wx.ID_REFRESH, 'Chec&k\tSpace', 'Check this game')
-    solvei = helpMenu.Append(wx.ID_ANY, '&Start Solve\tDelete', 'Watch it solve itself')
-    stopi = helpMenu.Append(wx.ID_ANY, '&Kill Solve\t`', 'Kill the solve')
+    solvei = helpMenu.Append(wx.ID_ANY, '&Start Solve\tF9', 'Watch it solve itself')
+    stopi = helpMenu.Append(wx.ID_ANY, '&Kill Solve\tF10', 'Kill the solve')
 
     # create menubar and buttons
     menubar = wx.MenuBar()
@@ -318,23 +307,18 @@ class NrkbController(wx.Frame):
   # fetches a new game
   def OnNew(self, event):
     self.newGame()
-    self.updateStatus()
   # requests board to be cleared
   def OnClear(self, event):
     self.clearGame()
-    self.updateStatus()
   # checks the game, which also redraws flagged squares
   def OnCheck(self, event):
     self.checkGame()
-    self.updateStatus()
   # asks for solution
   def OnSolve(self, event):
     self.startSolveGame()  
-    self.updateStatus()
   # kills the solution thread
   def OnStop(self, event):
     self.stopSolveGame()
-    self.updateStatus()
   # displays high scores dialog box
   def OnStatistics(self, event):
     score_dialog = HighScores(self)
@@ -402,7 +386,6 @@ class NrkbController(wx.Frame):
       changed = self.game.setState(coords, state)
       if changed: 
         self.board.drawSquare(coords, state, False)
-  # TODO: deprecate, and have check pass back a flag matrix instead
   def flagGame(self, coords, state):
     self.board.drawSquare(coords, state, True)
 
@@ -437,7 +420,7 @@ class NrkbController(wx.Frame):
     self.stopSolveGame()
     self.game.clear()
     self.grid.copy_game(self.game)
-    self.status = self.grid.check()
+    self.status = GameState.OKAY
     self.board.drawBoard()
     if not self.timer.IsRunning():
       self.timer.Start()
@@ -447,12 +430,13 @@ class NrkbController(wx.Frame):
     if self.status == GameState.ERROR:
       self.board.drawBoard()      
     self.grid.copy_game(self.game)
-    # TODO: have check pass back a status and a flag matrix, then draw here
     self.status = self.grid.check(self)
     if self.status == GameState.ERROR:
       self.disqualified = True
     elif self.status == GameState.SOLVED and not self.disqualified:
       self.logScore(self.rows, time.time() - self.start, time.time())
+
+  # called when user completes game. asks for a name, logs score, shows dialog
   def logScore(self, size, score, date):
     if not nrkb_fctrl.is_better(size, score):
       return
@@ -464,30 +448,27 @@ class NrkbController(wx.Frame):
       score_dialog = HighScores(self)
       score_dialog.Show(True)
 
-
-
-  # TODO: end sequence for high scores and everything
   def startSolveGame(self):
     if self.locked():
       return
     if not self.grid.solving:
       wx.BeginBusyCursor()
-    # TODO: catch errors?
     self.disqualified = True
     self.grid.solving = True
     solver_thread = threading.Thread(target=self.grid.solve, args = [self])
     solver_thread.daemon = True
     solver_thread.start()
-  # tell grid to stop solving by setting attribute, then updated the game state and all
+
+  # tell grid to stop solving by setting attribute
   def stopSolveGame(self):
     if self.grid.solving:
       wx.EndBusyCursor()
     self.grid.solving = False
-    self.status = self.grid.check()
-    # TODO: maybe self.checkGame() instead
+
 
 # main method!
 if __name__ == '__main__':
+  # if run by cmd, parse out size and index
   sizes = [5, 7, 10, 12, 15, 20]
   size = 10
   index = -1
@@ -499,6 +480,7 @@ if __name__ == '__main__':
   if len(sys.argv) >= 3:
     index = int(sys.argv[2])
 
+  # initialize the controller, then let it run
   app = wx.App()
   NrkbController(None, size, size, index)
   app.MainLoop()

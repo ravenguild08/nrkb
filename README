@@ -1,0 +1,65 @@
+README
+
+nrkb
+peter hung | phung@post.harvard.edu
+ 2013-3-18 | 2013-3-29
+
+a Nurikabe UI and solver using python and wxPython
+- 6 different size board libraries courtesy of www.puzzle-nurikabe.com
+- instantaneous click and drag interaction
+- high score recording capability, but in a visible .json file
+- intelligent red highlighting of errors
+- a check() method that evaluates a passed board instead of comparing to a solution
+- a solve() method that applies the inherent rules of nurikabe and
+  recursively guesses for unknown portions. the recursive behavior might be redone
+
+
+nrkb.py               :: UI and controller for user interaction
+nrkb_logic.py         :: game logic, solver, and checker
+nrkb_fctrl.py         :: file interaction
+
+[size]x[size].json    :: json-encoded board files for size in {5, 7, 10, 12, 15, 20}
+scores.json           :: created file for saved high scores. no need to package
+nrkb.ico/png/icns     :: icons for compiled .exe
+
+nrkb_debug.py         :: starts a game and runs solve
+count.py              :: prints how many boards of each size of board
+nrkb_process.py       :: stores a board in load.txt as a json-encoded array
+/nrkb/nrkb_spider.py  :: crawler that visits www.puzzle-nurikabe.com to scrape boards
+
+
+
+version 1.1 :: 2013-8-29
+- README finally created
+- UI flagging behavior vastly improved to only highlight wrong regions
+- check split into a version for the UI to call and a short-circuiter for the solver
+- updating time when not supposed to corrected
+
+version 1.0 :: 2013-3-28
+- controller has locking mechanism cleaned up
+- high scores able to be recorded, reset
+- git version control begun
+- UI timer behavior corrected
+
+version 0.2 :: 2013-3-25
+- first packaged into an exe
+- nrkb.png/ico created
+- controller starts a daemon thread to run solver so that it can be killed
+- UI turns red on error, highlighting wrong groups
+- boards turned into .json instead of .txt
+
+version 0.1 :: 2013-3-23
+- timer included in the UI
+- checker mostly correct. many isolated bugs. used reachers design
+- solver had most sophisticated functions like chaining and reaching
+- solver turned into recursive guesser, making it successful on small boards but
+  hopelessly slow on long boards
+- a spider to crawl complete, although kind of hacky. must be run once to grab
+  one board, and size needs to be manually changed in source
+
+version 0.0 :: 2013-3-20
+- a basic UI complete. click and drag cursor has correct behavior
+- preferences dialog implemented to change sizes
+- about, help, clear, new, quit events strung together
+- file functionality able to read and write boards, but boards have to be typed in
+- logic incomplete. groups kind of work, but bugs are everywhere

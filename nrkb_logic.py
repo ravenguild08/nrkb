@@ -11,12 +11,16 @@
   - when initialized, searched appropriately sized text file of json boards and loads one
 
   a Grid is foremost an array of Spaces, which know each other's neighbors and calculates things using Groups
-  - check() asks every island to find_group, inferring that blanks might mean islands, then the waters
-    * realizes if an island has not enough space for its contained seed or seeds
-    * realizes if an unseeded island is surrounded by water
-    * realizes if a water that doesn't cover the whole board is surrounded by islands
-    * realizes if there are too many contiguous islands or if there are contiguous seeds
+  - check() tells every group to infer its group, waters first to fill in some states with infer
+    * realizes most locally-detectable errors
+      - if multiple seeds are connected by islands, or if it has too many islands
+      - if several seeds are confined to too small a space
+      - if an unseeded island is surrounded by water
+      - if water has a puddle
+      - if water is completely surrounded by island      
+    * intelligently tells the controller to flag wrong regions
   - solve() uses groups, and remembered owners and a reacher map and logged owners of islands
+    * tells controller it to update squares as they're deduced
     * slowly colors in one space at a time, queuing neighbors to be checked later
     * local rules:
       - if water only has one dof, continue water there
@@ -49,7 +53,6 @@
       - can apply to water too, right? where there's an infinite number of lefts? 
     * revert to old version of guessing, where it doesn't recurse immediately but tries to find locally conclusive guesses
       - maybe switch between them 
-    * branch out two versions of check(), a check_ui that detects all mistakes and returns a game-state and flag matrix
     * a check() for the solver that can be asked to check a certain region and that returns as soon as it finds an error
     * completely overhaul group unification so that groups don't need to be forgotton and generated all the time
 
@@ -59,7 +62,6 @@ from Enum import Enum
 import nrkb_fctrl
 import random
 import time
-import sys
 
 loop_count = 0
 grouped_count = 0
@@ -184,91 +186,147 @@ class Grid(object):
         space.find_group(infer)
 
   # returns a GameState, setting a flag for every square in an invalid group
-  def check(self, controller = None):
-    incomplete = False
-    island_error = False
-    water_error = False
-    target_acquired = False
-    water_count = 0
-
+  def check(self, controller):
     # because nothing else in the system actually uses infer groups, save them only temporarily
     infer_groups = [[None for x in range(self.cols)] for y in range(self.rows)]
-    flags = [[None for x in range(self.cols)] for y in range(self.rows)]
+    group_dict = {}
+    for tipe in Type:
+      group_dict[tipe] = []
+    group_dict['CROWDED_ISLAND'] = []
+
+    # sweep through seeds to see if any have too many islands
+    for seed in self.seeds:
+      reg_group = seed.find_group(infer = False)
+      if reg_group.type == Type.INVALID_ISLAND:
+        # note that this one will have duplicates
+        group_dict['CROWDED_ISLAND'].append(reg_group)
 
     # sweep once to calculate island groups and infer some islands if not marked in game
     for y in range(self.rows):
       for x in range(self.cols):
         space = self.s[y][x]
-        if space.state != WATER:
-          # if this space has not been assigned a group, find the group, and assign it to everyone
-          if not infer_groups[y][x]:
+        if space.state != WATER and not infer_groups[y][x]:
             group = space.find_group(infer = True, remember = False)
             for s in group.spaces + group.dofs:
               infer_groups[s.y][s.x] = group
-          else:
-            group = infer_groups[y][x]
-
-          # if it's an invalid island, log an error, and flag it for the solver and controller
-          if group.type == Type.INVALID_ISLAND:
-            island_error = True
-            space.flag = space.state
-            flags[y][x] = space.state
-          elif group.type == Type.INCOMPLETE or group.type == Type.LONE_BLANK:
-            incomplete = True
-          
-          # wrong if a continuous group of islands has more than one seed or too many islands
-          reg_group = space.find_group(infer = False)
-          if reg_group:
-            nums = len(reg_group.numbers)
-            if nums > 1 or (nums == 1 and len(reg_group.spaces) > reg_group.numbers[0].state):
-              island_error = True
-              space.flag = space.state
-              flags[y][x] = space.state          
+            group_dict[group.type].append(group)          
 
     # sweep one more time after guessed spaces have been filled in for water
+    water_count = 0
+    target_acquired = False
     for y in range(self.rows):
       for x in range(self.cols):
         space = self.s[y][x]
-        if space.state == WATER:
-          if not infer_groups[y][x]:
+        if space.state == WATER and not infer_groups[y][x]:
             group = space.find_group(infer = True, remember = False)
             for s in group.spaces:
               infer_groups[s.y][s.x] = group
+            group_dict[group.type].append(group)
             water_count += 1
-          else:
-            group = infer_groups[y][x]
+            if group.type == Type.CLOSED_WATER and len(group.spaces) == self.target:
+              target_acquired = True
+
+    island_error = len(group_dict['INVALID_ISLAND']) or len(group_dict['CROWDED_ISLAND'])
+    incomplete = len(group_dict['INCOMPLETE']) or len(group_dict['LONE_BLANK'])
+    water_error = len(group_dict['CLOSED_WATER']) or len(group_dict['INVALID_WATER'])
+
+    # if there are no wrong islands and only one water of target length, it's solved
+    if not island_error and target_acquired and water_count == 1:
+      return GameState.SOLVED
+    # if there are no errors and it's still missing stuff, it's okay to continue
+    elif not island_error and not water_error and incomplete:
+      return GameState.OKAY
+    # otherwise, it's wrong. do fancy thing with adding things to flag
+
+    # flag all wrong islands
+    for group in set(group_dict['CROWDED_ISLAND']):
+      for space in group.spaces:
+        controller.flagGame((space.x, space.y), space.state)
+    for group in (group_dict['INVALID_ISLAND']):
+      for space in group.spaces:
+        controller.flagGame((space.x, space.y), space.state)
+      for space in group.dofs:
+        controller.flagGame((space.x, space.y), space.state)
+    # for groups with puddles, find the puddles, and highlight that
+    for group in group_dict['INVALID_WATER']:
+      to_flag = []
+      for corner in group.spaces:
+        if self.is_puddle((corner.x, corner.y)):
+          x, y = corner.x, corner.y
+          to_flag.extend([self.s[y][x], self.s[y+1][x], self.s[y][x+1], self.s[y+1][x+1]])
+      for space in set(to_flag):
+        controller.flagGame((space.x, space.y), space.state)
+    # if it's only wrong because the water's aren't connected, flag all but biggest
+    apart = sorted(group_dict['CLOSED_WATER'], key = lambda g: len(g.spaces))
+    if water_count > 0 and water_count == len(group_dict['CLOSED_WATER']):
+      apart.pop()
+    for group in apart:
+      for space in group.spaces:
+        controller.flagGame((space.x, space.y), space.state)
+    return GameState.ERROR
+
+  # what the solver calls to see if it's made a mistake
+  # TODO: be able to pass it a region at which to start
+  # TODO: repair flagging behavior
+  def status(self, region = None):
+
+    # because nothing else in the system actually uses infer groups, save them only temporarily
+    infer_groups = [[None for x in range(self.cols)] for y in range(self.rows)]
+
+    for seed in self.seeds:
+      if (seed.find_group(infer = False)).type == Type.INVALID_ISLAND:
+        return GameState.ERROR
+
+    # sweep once to calculate island groups and infer some islands if not marked in game
+    incomplete = False
+    for y in range(self.rows):
+      for x in range(self.cols):
+        space = self.s[y][x]
+        if space.state != WATER and not infer_groups[y][x]:
+          group = space.find_group(infer = True, remember = False)
+          # if it's an invalid island, log an error, and flag it for the solver and controller
+          if group.type == Type.INVALID_ISLAND:
+            return GameState.ERROR
+          elif group.type == Type.INCOMPLETE or group.type == Type.LONE_BLANK:
+            incomplete = True
+          # remember group in temp array to not run again
+          for s in group.spaces + group.dofs:
+            infer_groups[s.y][s.x] = group          
+
+    # sweep one more time after guessed spaces have been filled in for water
+    target_acquired = False
+    water_count = 0
+    for y in range(self.rows):
+      for x in range(self.cols):
+        space = self.s[y][x]
+        if space.state == WATER and not infer_groups[y][x]:
+          group = space.find_group(infer = True, remember = False)
+          water_count += 1
 
           # if it's an invalid water. i.e. has a puddle, flag
           if group.type == Type.INVALID_WATER:
-            water_error = True
-            space.flag = space.state
-            flags[y][x] = space.state
+            return GameState.ERROR
 
           # if it's a closed water, flag. the solution will be marked as this, so need to remember if its
           # size equals the target
           elif group.type == Type.CLOSED_WATER:
             if len(group.spaces) == self.target:
               target_acquired = True
-            water_error = True
-            space.flag = space.state
-            flags[y][x] = space.state
+            else:
+              return GameState.ERROR
+
+          for s in group.spaces:
+            infer_groups[s.y][s.x] = group
 
     # if there are no wrong islands and only one water of target length, it's solved
-    if not island_error and target_acquired and water_count == 1:
-      res = GameState.SOLVED
+    if target_acquired and water_count == 1:
+      return GameState.SOLVED
     # if there are no errors and it's still missing stuff, it's okay to continue
-    elif not island_error and not water_error and incomplete:
-      res = GameState.OKAY
+    elif not target_acquired and incomplete:
+      return GameState.OKAY
     # otherwise, it's wrong
     else:
-      res = GameState.ERROR
-      if controller:
-        # if controller is passed, try to highlight bad squares as red
-        for y in range(self.rows):
-          for x in range(self.cols):
-            if flags[y][x] != None:            
-              controller.flagGame((x, y), flags[y][x])
-    return res
+      return GameState.ERROR
 
   # takes a list of spaces and returns a list of all blanks that are bordered by all of them
   def common_blanks(self, spaces):
@@ -607,7 +665,7 @@ class Grid(object):
     # apply more complicated rules, returning true if changed
     def process_all():
       changed = True
-      while changed and self.check() != GameState.ERROR:
+      while changed and self.status() != GameState.ERROR:
         changed = False
         global loop_count
         loop_count += 1
@@ -691,7 +749,7 @@ class Grid(object):
 
     # recursively runs through the guessing queue and trying combinations until solved
     # returns True if it found a solution, False its current guess found an error
-    # TODO: calls check() all the time, so improving that intelligent might be worth it
+    # TODO: calls status() all the time, so improving that intelligent might be worth it
     def guess_recur(guess_queue, index, depth):
       if not self.solving:
         return False
@@ -725,7 +783,7 @@ class Grid(object):
       process_all()
       #print 'guess', index, 'is', guessing
       #print self
-      state = self.check()
+      state = self.status()
       if state == GameState.SOLVED:
         return True
       elif state == GameState.OKAY:
@@ -742,7 +800,7 @@ class Grid(object):
       process_all()
       #print 'guess', index, 'is', guessing
       #print self
-      state = self.check()
+      state = self.status()
       if state == GameState.SOLVED:
         return True
       elif state == GameState.OKAY:
@@ -793,7 +851,7 @@ class Grid(object):
     process_all()
 
 
-    # at this point, its heuristics are done, and must start guess and checking
+    # at this point, its heuristics are done, and must start guess and statusing
     # find all blanks and and order them in some hopefully intelligent guess order
     guess_queue = sorted(self.get_blanks(), key = guess_score, reverse = True)
     
@@ -812,8 +870,9 @@ class Grid(object):
       print 'took', str(round(time.time() - start, 3)), 'seconds,', loop_count, 'loops,', 
       print processed_count, 'processed,', grouped_count, 'groups,', guessed_count, 'guesses'
       print self
-      print self.check()
+      print self.status()
     if controller:
+      controller.status = self.status()
       controller.stopSolveGame()
 
 class Space(object):
@@ -873,7 +932,7 @@ class Space(object):
 
     global grouped_count
     grouped_count += 1
-    group = Group(self.grid)
+    group = Group()
     group.inferred = infer
     crawl_queue = queue()
 
@@ -966,7 +1025,9 @@ class Space(object):
           group.type = Type.LONE_BLANK      
       elif seed_num > 1:
         # if too few spaces for seeds, is invalid
-        if sum(map(lambda x: x.state, group.numbers)) + 1 > size:
+        if not infer:
+          group.type = Type.INVALID_ISLAND
+        elif sum(map(lambda x: x.state, group.numbers)) + 1 > size:
           group.type = Type.INVALID_ISLAND
         # otherwise, conclude it's a not yet played
         else:
@@ -974,24 +1035,25 @@ class Space(object):
       else:
         num = group.numbers[0].state
         # if it's possible for group to be a valid island
-        if size == num:
-          # if on infer, mark blanks as part of island
+        if len(group.spaces) > num:
+          group.type = Type.INVALID_ISLAND
+        elif size == num:
+        # if on infer, mark blanks as part of island
           if infer:
             for dof in group.dofs:            
               dof.state = INFER
             group.spaces.extend(group.dofs)
             group.dofs = []
-
           group.type = Type.ISLAND
-        # if too many blanks, mark as incomplete
-        elif len(group.spaces) > num:
-          group.type = Type.INVALID_ISLAND
         elif size > num:
           group.type = Type.INCOMPLETE
-
         # if too few blanks, mark as wrong
         else:
-          group.type = Type.INVALID_ISLAND
+          if infer:
+            group.type = Type.INVALID_ISLAND
+          else:
+            group.type = Type.INCOMPLETE
+
       
     # wipe tags for next time's use, and point members of group to group
     for dof in group.dofs:
@@ -1045,8 +1107,7 @@ class Group(object):
     return str(self.type) + ':\n' + spaces_str + '\n' +  walls_str +'\n' + dofs_str + '\n'
   def __rcutepr__(self):
     return str(self)
-  def __init__(self, grid):
-    self.grid = grid
+  def __init__(self):
     self.spaces = []
     self.dofs = []
     self.walls = []

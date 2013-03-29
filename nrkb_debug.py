@@ -3,7 +3,7 @@
 '''
 nrkb_debug.py
 peter hung | phung@post.harvard.edu
-2013-3-19 | 3-23
+2013-3-19 | 3-29
 
 script that creates a game, a grid, and calls solve
 '''
@@ -27,5 +27,6 @@ if __name__ == '__main__':
   # create a new game
   game = nrkb_logic.Game(size, size, index)
   grid = nrkb_logic.Grid(game)
+  grid.solving = True
   grid.solve()
   
