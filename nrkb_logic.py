@@ -757,7 +757,6 @@ class Grid(object):
     start = time.time()    
     global loop_count, processed_count, grouped_count, guessed_count
     loop_count, processed_count, grouped_count, guessed_count = 0, 0, 0, 0
-    self.solving = True
 
     # wipe the board of everything
     for row in self.s:

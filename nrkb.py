@@ -32,6 +32,7 @@ import os
 import sys
 import time
 import nrkb_logic
+import nrkb_fctrl
 
 WATER = nrkb_logic.WATER
 ISLAND = nrkb_logic.ISLAND
@@ -57,7 +58,6 @@ class NrkbBoard(wx.Panel):
     self.font = wx.Font(self.width / 2 + 2, wx.FONTFAMILY_DEFAULT, wx.FONTSTYLE_NORMAL, wx.FONTWEIGHT_BOLD, False, 'Courier 10 Pitch')
     self.prev = -1, -1
     self.cursor = WATER
-    self.locked = False
 
     # setup mouse handlers
     self.Bind(wx.EVT_LEFT_DOWN, self.OnLeftDown)
@@ -78,7 +78,7 @@ class NrkbBoard(wx.Panel):
 
   # when clicked ask the controller for the current state, then and asks to change the region
   def OnLeftDown(self, event):
-    if self.locked:
+    if self.controller.locked():
       return
     self.prev = -1, -1
     try:
@@ -97,7 +97,7 @@ class NrkbBoard(wx.Panel):
     self.controller.changeGame(coords, self.cursor)
   # when clicked ask the controller for the current state, then and asks to change the region
   def OnRightDown(self, event):
-    if self.locked:
+    if self.controller.locked():
       return
     self.prev = -1, -1
     try:
@@ -117,9 +117,8 @@ class NrkbBoard(wx.Panel):
 
   # when it moves into another region, attempt to color that region
   def OnMouseMove(self, event):
-    if self.locked:
+    if self.controller.locked():
       return
-
     # do nothing if the mouse is not pressed right now
     if not event.LeftIsDown() and not event.RightIsDown():
       event.Skip()
@@ -184,6 +183,63 @@ class NrkbBoard(wx.Panel):
     elif state == ISLAND or state == INFER:
       w, h = dc.GetTextExtent('.')
       dc.DrawText('.', x * self.width - w/2 + self.width / 2, y * self.width - h/4)
+
+class HighScores(wx.Dialog):
+  def __init__(self, *args, **kwargs):
+    kwargs['title'] = 'High Scores'
+    #kwargs['size'] = (325, 225)
+    wx.Dialog.__init__(self, *args, **kwargs)
+
+    fgs = wx.FlexGridSizer(7, 4, 5, 20)
+    scores = nrkb_fctrl.get_scores()
+    header_font = wx.Font(8, wx.FONTFAMILY_DEFAULT, wx.FONTSTYLE_NORMAL, wx.FONTWEIGHT_BOLD)
+    headers = [wx.StaticText(self, label = 'Size'), 
+              wx.StaticText(self, label = 'Time'), 
+              wx.StaticText(self, label = 'Player'), 
+              wx.StaticText(self, label = 'Date Achieved')]
+    for header in headers:
+      header.SetFont(header_font)
+    fgs.AddMany(headers)
+    for size, (score, user, date) in sorted(scores.items(), key = lambda (k, v): int(k)):
+      sizet = wx.StaticText(self, label = str(size) + 'x' + str(size))
+      sizet.SetFont(header_font)
+      if score != -1:
+        if score > 60:
+          s, ms = divmod(score, 1)
+          m, s = divmod(score, 60)
+          score_str = ('%d:%02d:%02d' % (m, s, ms * 100))
+        else:
+          score_str = ('%.2f' % score)
+        if len(user) > 20:
+          user = user[:17] + '...'
+        scoret = wx.StaticText(self, label = score_str)
+        usert = wx.StaticText(self, label = user)
+        datet = wx.StaticText(self, label = time.strftime('%c', time.localtime(date)))
+      else:
+        scoret = wx.StaticText(self, label = '--:--.--')
+        usert = wx.StaticText(self, label = '--')
+        datet = wx.StaticText(self, label = 'not completed yet!')
+      fgs.AddMany([sizet, scoret, usert, datet])
+
+    okb = wx.Button(self, id = wx.ID_OK, label = 'OK')
+    clearb = wx.Button(self, id = wx.ID_CLEAR, label = 'Clear History')
+    self.Bind(wx.EVT_BUTTON, self.OnClear, clearb)
+    vbox = wx.BoxSizer(wx.VERTICAL)
+    hbox = wx.BoxSizer(wx.HORIZONTAL)
+    hbox.Add(okb, flag = wx.RIGHT | wx.ALIGN_CENTER, border = 20)
+    hbox.Add(clearb, flag = wx.LEFT | wx.ALIGN_CENTER, border = 20)
+    vbox.Add(fgs, flag = wx.ALL | wx.ALIGN_CENTER_HORIZONTAL, border = 15)
+    vbox.Add(wx.StaticLine(self, -1, size = (250, 1), style = wx.LI_HORIZONTAL), flag = wx.ALIGN_CENTER)
+    vbox.Add(hbox, flag = wx.ALL | wx.ALIGN_CENTER, border = 15)
+    self.SetSizer(vbox)
+    self.Layout()
+
+  def OnClear(self, event):
+    nrkb_fctrl.init_scores()
+    self.Destroy()
+
+    
+    
     
 class NrkbController(wx.Frame):
   def __init__(self, parent, rows, cols, index):
@@ -210,18 +266,19 @@ class NrkbController(wx.Frame):
     fileMenu = wx.Menu()
     newi = fileMenu.Append(wx.ID_NEW, '&New\tF2', 'Start new game')
     cleari = fileMenu.Append(wx.ID_CLEAR, '&Clear\tF3', 'Clear this game')
+    statisticsi = fileMenu.Append(wx.ID_ANY, '&High Scores\tF4', 'See high scores')  
     preferencesi = fileMenu.Append(wx.ID_PREFERENCES, '&Preferences\tF5', 'Alter game prefences')  
     fileMenu.AppendSeparator()
-    refreshi = fileMenu.Append(wx.ID_REFRESH, 'Chec&k\tSpace', 'Check this game')
-    solvei = fileMenu.Append(wx.ID_ANY, 'Start Solve\tDelete', 'Watch it solve itself')
-    stopi = fileMenu.Append(wx.ID_ANY, 'Kill Solve\t`', 'Kill the solve')
-    fileMenu.AppendSeparator()
-    quiti = fileMenu.Append(wx.ID_EXIT, 'Quit\tCtrl+Q', 'Quit application')
+    quiti = fileMenu.Append(wx.ID_EXIT, '&Quit\tCtrl+Q', 'Quit application')
     
     # create a help menu
     helpMenu = wx.Menu()
     helpi = helpMenu.Append(wx.ID_HELP, '&Help\tF1', 'Instructions')
     abouti = helpMenu.Append(wx.ID_ABOUT, '&About', 'About Nurikabe')
+    helpMenu.AppendSeparator()
+    refreshi = fileMenu.Append(wx.ID_REFRESH, 'Chec&k\tSpace', 'Check this game')
+    solvei = helpMenu.Append(wx.ID_ANY, '&Start Solve\tDelete', 'Watch it solve itself')
+    stopi = helpMenu.Append(wx.ID_ANY, '&Kill Solve\t`', 'Kill the solve')
 
     # create menubar and buttons
     menubar = wx.MenuBar()
@@ -233,6 +290,7 @@ class NrkbController(wx.Frame):
     self.Bind(wx.EVT_MENU, self.OnNew, newi)
     self.Bind(wx.EVT_MENU, self.OnClear, cleari)
     self.Bind(wx.EVT_MENU, self.OnCheck, refreshi)
+    self.Bind(wx.EVT_MENU, self.OnStatistics, statisticsi)
     self.Bind(wx.EVT_MENU, self.OnPreferences, preferencesi)
     self.Bind(wx.EVT_MENU, self.OnQuit, quiti)
     self.Bind(wx.EVT_MENU, self.OnHelp, helpi)
@@ -277,11 +335,16 @@ class NrkbController(wx.Frame):
   def OnStop(self, event):
     self.stopSolveGame()
     self.updateStatus()
+  # displays high scores dialog box
+  def OnStatistics(self, event):
+    score_dialog = HighScores(self)
+    score_dialog.Show(True)
   # displays size option dialog box, then starts a new game if a new size is selected
   def OnPreferences(self, event):
     values = [5, 7, 10, 12, 15, 20]
     choices = map(lambda x: str(x) + 'x' + str(x), values)
     opts = wx.SingleChoiceDialog(self, 'Select a size.', 'Nurikabe Options', choices)
+    opts.SetSize((250, 200))
     opts.SetSelection(values.index(self.rows))
     if opts.ShowModal() == wx.ID_OK:
       ix = opts.GetSelection()
@@ -296,16 +359,12 @@ class NrkbController(wx.Frame):
     self.Close()
   # displays instruction dialog
   def OnHelp(self, event):
-    wx.MessageBox("""You have a grid of squares, some of which start with numbers. The goal is to color the grid black or white according to these rules:
-- The white squares will form "islands". Each island must have one number and exactly that many white squares.
-- The black squares will form the stream, or "nurikabe", which come together to form a single polymino, which must not contain any 2x2 "puddles".
-Left click on a square to color it black. Right click to mark it with a dot, which colors it white. Click and drag to mark more than one square.
-""", 'Nurikabe Instructions', wx.OK | wx.ICON_INFORMATION)
+    wx.MessageBox("""You have a grid of squares, some of which start with numbers. The goal is to color the grid black or white according to these rules:\n- The white squares will form "islands". Each island must have one number and exactly that many white squares.\n- The black squares will form the stream, or "nurikabe", which come together to form a single polymino, which must not contain any 2x2 "puddles".\nLeft click on a square to color it black. Right click to mark it with a dot, which colors it white. Click and drag to mark more than one square.\n""", 'Nurikabe Instructions', wx.OK | wx.ICON_INFORMATION)
   # displays about dialog
   def OnAbout(self, event):
     info = wx.AboutDialogInfo()
     #info.SetIcon(wx.Icon('xxx.png', wx.BITMAP_TYPE_PNG))
-    info.SetName('Nurikabe')
+    info.SetName('nrkb')
     info.SetVersion('1.0')
     info.SetDescription("""A Nurikabe engine and solver.\nBoards from puzzle-nurikabe.com.""")
     info.SetCopyright('(C) 2013')
@@ -318,10 +377,10 @@ Left click on a square to color it black. Right click to mark it with a dot, whi
 
   # this function is called all the time, every tenth second and after every interaction
   def updateStatus(self):
-    if self.gameState == GameState.SOLVED:
+    if self.status == GameState.SOLVED:
       self.timer.Stop()
     time_str = str(round(time.time() - self.start, 1))
-    state_str = str(self.gameState)
+    state_str = str(self.status)
     self.sb.SetFields([state_str, time_str])
   # asks board for its size and resizes frame around it. calibrated for windows 7 aero
   def resize(self):
@@ -331,15 +390,15 @@ Left click on a square to color it black. Right click to mark it with a dot, whi
     self.SetSize((width, height))
     self.SetAutoLayout(True)
     self.Layout()
-  # check stores the result in self.gameState
+  # check stores the result in self.status
   def locked(self):
-    return self.gameState == GameState.SOLVED or self.grid.solving
+    return self.status == GameState.SOLVED or self.grid.solving
 
   # functions that the view calls. changeGame() interacts with the game
   def fetchGame(self, coords):
     return self.game.getState(coords)
   def changeGame(self, coords, state):
-    if self.gameState != GameState.SOLVED:
+    if self.status != GameState.SOLVED:
       changed = self.game.setState(coords, state)
       if changed: 
         self.board.drawSquare(coords, state, False)
@@ -361,7 +420,8 @@ Left click on a square to color it black. Right click to mark it with a dot, whi
       self.stopSolveGame()
     self.game = nrkb_logic.Game(self.rows, self.cols, index)
     self.grid = nrkb_logic.Grid(self.game)
-    self.gameState = GameState.OKAY
+    self.status = GameState.OKAY
+    self.disqualified = False
     # if requesting a new board size, destroy old UI
     if self.rows != self.board.rows or self.cols != self.board.cols:
       self.board.Destroy()
@@ -377,36 +437,54 @@ Left click on a square to color it black. Right click to mark it with a dot, whi
     self.stopSolveGame()
     self.game.clear()
     self.grid.copy_game(self.game)
-    self.gameState = self.grid.check()
+    self.status = self.grid.check()
     self.board.drawBoard()
     if not self.timer.IsRunning():
       self.timer.Start()
   def checkGame(self):
     if self.locked():
       return
-    if self.gameState == GameState.ERROR:
+    if self.status == GameState.ERROR:
       self.board.drawBoard()      
     self.grid.copy_game(self.game)
-    # TODO: have check pass back a gameState and a flag matrix, then draw here
-    self.gameState = self.grid.check(self)
+    # TODO: have check pass back a status and a flag matrix, then draw here
+    self.status = self.grid.check(self)
+    if self.status == GameState.ERROR:
+      self.disqualified = True
+    elif self.status == GameState.SOLVED and not self.disqualified:
+      self.logScore(self.rows, time.time() - self.start, time.time())
+  def logScore(self, size, score, date):
+    if not nrkb_fctrl.is_better(size, score):
+      return
+    ted = wx.TextEntryDialog(self, 'New best time! Enter your name:', 'High Score', defaultValue = 'Name')
+    ted.SetSize((200, 150))
+    if ted.ShowModal() == wx.ID_OK:
+      name = ted.GetValue()
+      nrkb_fctrl.set_score(size, score, name, date)
+      score_dialog = HighScores(self)
+      score_dialog.Show(True)
+
+
+
+  # TODO: end sequence for high scores and everything
   def startSolveGame(self):
     if self.locked():
       return
-    if not self.board.locked:
+    if not self.grid.solving:
       wx.BeginBusyCursor()
-      # TODO: funnily enough, there are two distinct ways to lock the board. combine them?
-      self.board.locked = True
     # TODO: catch errors?
+    self.disqualified = True
+    self.grid.solving = True
     solver_thread = threading.Thread(target=self.grid.solve, args = [self])
     solver_thread.daemon = True
     solver_thread.start()
   # tell grid to stop solving by setting attribute, then updated the game state and all
   def stopSolveGame(self):
-    self.grid.solving = False
-    self.gameState = self.grid.check()
-    if self.board.locked:
-      self.board.locked = False
+    if self.grid.solving:
       wx.EndBusyCursor()
+    self.grid.solving = False
+    self.status = self.grid.check()
+    # TODO: maybe self.checkGame() instead
 
 # main method!
 if __name__ == '__main__':

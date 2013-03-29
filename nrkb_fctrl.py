@@ -13,8 +13,66 @@ import json
 import os
 import random
 import string
+import time
 
 sizes = [5, 7, 10, 12, 15, 20]
+
+SCORE_FILE = 'scores.json'
+
+# returns a list of (size, time, name) tuples. assumes the size square board sizes
+def get_scores():
+  try:
+    infile = open(SCORE_FILE, 'r')
+  except IOError:
+    return init_scores()
+  text = infile.read()
+  scores = json.loads(text)
+  return scores
+
+# returns true if the passed score is better than the stored one per size
+def is_better(size, score):
+  if size not in sizes:
+    return False
+  scores = get_scores()
+  old = scores[str(size)][0]
+  if old == -1 or score < old:
+    return True
+  return False
+
+# when passed a time, replaces previous best only if it is faster
+def set_score(size, score, user, date = None):
+  if size not in sizes:
+    return False
+  scores = get_scores()
+  old = scores[str(size)][0]
+  if old == -1 or score < old:
+    if date == None:
+      date = time.time()
+    scores[str(size)] = (score, user, date)
+    try:
+      outfile = open(SCORE_FILE, 'w')
+    except IOError:
+      return
+    text = json.dumps(scores, indent = 2)
+    outfile.write(text)
+    outfile.close()
+    return True
+  return False
+
+# blindly wipes out the score file
+def init_scores():
+  scores = {}
+  for size in sizes:
+    scores[str(size)] = ((-1, '', None))
+  try:
+    outfile = open(SCORE_FILE, 'w')
+  except IOError:
+    return scores
+  text = json.dumps(scores, indent = 2)
+  outfile.write(text)
+  outfile.close()
+  return scores
+
 
 def filename(rows, cols = None):
   if cols == None:    
