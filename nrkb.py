@@ -466,16 +466,17 @@ class NrkbController(wx.Frame):
     solver_thread.start()
 
   # tell grid to stop solving by setting attribute
-  def stopSolveGame(self):
+  def stopSolveGame(self, update = False):
     if self.grid.solving:
       wx.EndBusyCursor()
     self.grid.solving = False
     self.drawQueue()
 
     # resync board if the draw queue messed up earlier, which is actually pretty likely
-    for y in range(self.rows):
-      for x in range(self.cols):
-        self.game.board[y][x] = self.grid.s[y][x].state
+    if update:
+      for y in range(self.board.rows):
+        for x in range(self.board.cols):
+          self.game.board[y][x] = self.grid.s[y][x].state
     self.board.drawBoard()
 
 

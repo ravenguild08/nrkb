@@ -573,9 +573,9 @@ class Grid(object):
       # if the state should be changed, change it, then forget all nearby groups
       if space.state != state:
         space.state = state
-        space.forget_group()
-        for n in space.neighbors:
-          n.forget_group()
+      space.forget_group()
+      for n in space.neighbors:
+        n.forget_group()
 
         # if controller is set, let know that it should draw something
         if controller and self.solving:
@@ -617,6 +617,8 @@ class Grid(object):
     # clear the queue according to the simpler local rules
     def process():
       while not q.empty():
+        if not self.solving:
+          return
         this = q.pop()
         global processed_count
         processed_count += 1
@@ -740,7 +742,7 @@ class Grid(object):
 
     def guess_single(guessing):
       if not self.solving:
-        return Guess.SKIPPED
+        return Guess.DEADEND
       if guessing.state != BLANK:
         return Guess.SKIPPED
 
@@ -923,7 +925,7 @@ class Grid(object):
         if res == Guess.DEADEND:
           if controller:
             controller.status = self.status()
-            controller.stopSolveGame()
+            controller.stopSolveGame(self.solving)
           return
 
     # generate the guess tree, which will keep on branching until it solves the game
@@ -940,7 +942,7 @@ class Grid(object):
       print self.status()
     if controller:
       controller.status = self.status()
-      controller.stopSolveGame()
+      controller.stopSolveGame(self.solving)
 
 class Space(object):
   def __str__(self):
