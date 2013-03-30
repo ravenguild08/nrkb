@@ -11,7 +11,7 @@ a Nurikabe UI and solver using python and wxPython
 - intelligent red highlighting of errors
 - a check() method that evaluates a passed board instead of comparing to a solution
 - a solve() method that applies the inherent rules of nurikabe and
-  recursively guesses for unknown portions. the recursive behavior might be redone
+  repeatedly guesses for unknown portions.
 
 
 nrkb.py               :: UI and controller for user interaction
@@ -28,6 +28,11 @@ nrkb_process.py       :: stores a board in load.txt as a json-encoded array
 /nrkb/nrkb_spider.py  :: crawler that visits www.puzzle-nurikabe.com to scrape boards
 
 
+version 1.2 :: 2013-8-29
+- swapped out deep recursion for shallow guessing
+- changed communication from solver to controller using a queue
+- set explicit size for high scores
+- changed debug to print out game index
 
 version 1.1 :: 2013-8-29
 - README finally created

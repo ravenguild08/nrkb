@@ -42,20 +42,14 @@
       can only be reached by the same seed, attempt to chain to both
       - any space that appears in both chains or each other's chains must be islands
     * repeats until no changes have been made
-    * once it can conclude no more. recursively guesses on space at a time and searches
-      the recursion tree until it encounters the solution
+
+    * repeats guesses of depth one, only retaining those which its sure its right. this solves nearly all boards
+
+    * recursively guesses on space at a time and searches the recursion tree until it encounters the solution
 
   - TODO:
-    * improve the guessing order
-    * implement way-out locally... maybe will be taken care of in localize guessing. 
-    * implement confined. for big islands, look at dofs. if only like 2 or 3, see how many blanks it leads into. if in all but one
-      section it can't fit all the left, the first few dofs on the other side are islands.
-      - can apply to water too, right? where there's an infinite number of lefts? 
-    * revert to old version of guessing, where it doesn't recurse immediately but tries to find locally conclusive guesses
-      - maybe switch between them 
-    * a check() for the solver that can be asked to check a certain region and that returns as soon as it finds an error
+    * improve the guessing order. a spiral pattern or something would be good
     * completely overhaul group unification so that groups don't need to be forgotton and generated all the time
-
 """
 
 from Enum import Enum
@@ -584,9 +578,8 @@ class Grid(object):
           n.forget_group()
 
         # if controller is set, let know that it should draw something
-        # TODO: for multithreaded, should send an event of some kind
         if controller and self.solving:
-          controller.changeGame((space.x, space.y), state)
+          controller.queueChange((space.x, space.y), state)
 
       # if it was given an owner, set it.
       if known_owner != None:
@@ -614,14 +607,12 @@ class Grid(object):
       for y in range(self.rows):
         for x in range(self.cols):
           space = self.s[y][x]
-          space.state = old.board[y][x]
+          if space.state != old.board[y][x]:
+            space.state = old.board[y][x]
+            if controller and self.solving:
+              controller.queueChange((x, y), old.board[y][x])          
           space.forget_group()
           space.forget_reachers()
-
-      # if controller is set, let it know that it should redraw entire game
-      # TODO: change to an event or something
-      if controller and self.solving:
-        controller.updateGame(old)
 
     # clear the queue according to the simpler local rules
     def process():
@@ -730,7 +721,7 @@ class Grid(object):
 
         process()
     
-    # socores blanks by how well informative it thinks it'll be in guessing
+    # scores blanks by how well informative it thinks it'll be in guessing    
     def guess_score(space):
       score = 0.
       for n in space.neighbors:
@@ -745,17 +736,70 @@ class Grid(object):
       score += abs(space.y - self.rows / 2) * .5
       return score
 
-    GuessState = Enum(['CONCLUSIVE', 'DEADEND', 'INCONCLUSIVE', 'VICTORY'])
+    Guess = Enum(['CONCLUSIVE', 'DEADEND', 'INCONCLUSIVE', 'VICTORY', 'SKIPPED'])
+
+    def guess_single(guessing):
+      if not self.solving:
+        return Guess.SKIPPED
+      if guessing.state != BLANK:
+        return Guess.SKIPPED
+
+      global guessed_count
+      save = save_game()
+      by_poe = None
+
+      # choose order of guessing
+      if guessing.flag == WATER:
+        try1, try2 = ISLAND, WATER
+      elif guessing.flag == ISLAND:
+        try1, try2 = WATER, ISLAND
+      else:
+        try1, try2 = ISLAND, WATER
+
+      guessed_count += 1
+      reset_game(save)
+      alter(guessing, try1)
+      process_all()
+      #print 'guess', index, 'is', guessing
+      status = self.status()
+      if status == GameState.SOLVED:
+        return Guess.VICTORY
+      elif status == GameState.ERROR:
+        # remember that it narrowed it down
+        by_poe = try2
+      else: # elif status == GameState.OKAY:
+        other = save_game()
+
+      guessed_count += 1
+      reset_game(save)
+      alter(guessing, try2)
+      process_all()
+      #print 'guess', index, 'is', guessing
+      status = self.status()
+      if status == GameState.SOLVED:
+        return Guess.VICTORY
+      elif status == GameState.ERROR:
+        if by_poe:
+          reset_game(save)
+          return Guess.DEADEND
+        else:
+          reset_game(other)
+          return Guess.CONCLUSIVE
+      else: # elif status == GameState.OKAY:
+        if by_poe:
+          return Guess.CONCLUSIVE
+        else:
+          reset_game(save)
+          return Guess.INCONCLUSIVE
 
     # recursively runs through the guessing queue and trying combinations until solved
-    # returns True if it found a solution, False its current guess found an error
-    # TODO: calls status() all the time, so improving that intelligent might be worth it
-    def guess_recur(guess_queue, index, depth):
+    # kind of crappy algorithm, really
+    def guess_recur(guess_queue, index):
       if not self.solving:
         return False
       global guessed_count
       length = len(guess_queue)
-      if length == 0 or depth < 0:
+      if length == 0:
         return False
 
       # find the next blank in the queue
@@ -783,12 +827,12 @@ class Grid(object):
       process_all()
       #print 'guess', index, 'is', guessing
       #print self
-      state = self.status()
-      if state == GameState.SOLVED:
+      status = self.status()
+      if status == GameState.SOLVED:
         return True
-      elif state == GameState.OKAY:
+      elif status == GameState.OKAY:
         # if inconclusive, go deeper
-        if guess_recur(guess_queue, index + 1, depth - 1):
+        if guess_recur(guess_queue, index + 1):
           return True
       
       if not self.solving:
@@ -800,15 +844,15 @@ class Grid(object):
       process_all()
       #print 'guess', index, 'is', guessing
       #print self
-      state = self.status()
-      if state == GameState.SOLVED:
+      status = self.status()
+      if status == GameState.SOLVED:
         return True
-      elif state == GameState.OKAY:
+      elif status == GameState.OKAY:
         # since the board has conclusively progressed, remodel the guess queue
         # TODO: for some reason, remodeling the guess queue does not work well, which means the scoring heuristic is shitty
         #new_guess_queue = sorted(self.get_blanks(), key = guess_score, reverse = True)
         #return guess_recur(new_guess_queue, 0, depth - 1)
-        return guess_recur(guess_queue, index + 1, depth - 1)
+        return guess_recur(guess_queue, index + 1)
       return False
 
     # okay, let's actually start doing things now!
@@ -826,9 +870,10 @@ class Grid(object):
     q = queue()
 
     # if controller is known, have it update the board to the blank state
-    # TODO: change this to some sort of event
     if controller and self.solving:
-      controller.updateGame(save_game())
+      for y in range(self.rows):
+        for x in range(self.cols):
+          controller.queueChange((x, y), self.s[y][x].state)
 
     # fill queue with seeds, and surround trivially complete seeds with water
     for seed in sorted(self.seeds, key = lambda x: x.state, reverse = True):
@@ -850,21 +895,43 @@ class Grid(object):
     # apply all heuristics it has, looping over the different ones until no changes are made
     process_all()
 
-
-    # at this point, its heuristics are done, and must start guess and statusing
-    # find all blanks and and order them in some hopefully intelligent guess order
-    guess_queue = sorted(self.get_blanks(), key = guess_score, reverse = True)
-    
-    # print out the reacher map
+   # print out the reacher map
     if not controller:
       #print '\n'.join(' '.join(str(len(s.reachers)) if s.owner == None else '.' for s in row) for row in self.s) + '\n'  
-      print self
       print 'took', str(round(time.time() - start, 3)), 'seconds,', loop_count, 'loops,', 
-      print processed_count, 'processed,', grouped_count, 'groups,', len(guess_queue), 'to guess'
+      print processed_count, 'processed,', grouped_count, 'groups,', len(self.get_blanks()), 'to guess'
+    
+    changed_count = 1
+    while changed_count > 0:
+      if not controller:
+        print self
+      changed_count = 0
+      guess_queue = sorted(self.get_blanks(), key = guess_score, reverse = True)
+      for guessing in guess_queue:
+        res = guess_single(guessing)
+        if res == Guess.INCONCLUSIVE:
+          res = 'aww'
+        elif res == Guess.CONCLUSIVE:
+          changed_count += 1
+        elif res == Guess.SKIPPED:
+          res = '...'
+        elif res == Guess.VICTORY:
+          changed_count = 0
+          break
+        if not controller:
+          print "#" + str(guessed_count), guessing, res
+        if res == Guess.DEADEND:
+          if controller:
+            controller.status = self.status()
+            controller.stopSolveGame()
+          return
 
     # generate the guess tree, which will keep on branching until it solves the game
-    if guess_queue:
-      guess_recur(guess_queue, 0, len(guess_queue))
+    final_queue = sorted(self.get_blanks(), key = guess_score, reverse = True)
+    if final_queue:
+      if not controller:
+        print 'resorting to recursive guessing'
+      guess_recur(final_queue, 0)
 
     if not controller:
       print 'took', str(round(time.time() - start, 3)), 'seconds,', loop_count, 'loops,', 

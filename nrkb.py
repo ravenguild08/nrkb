@@ -11,8 +11,8 @@ NrkbBoard handles mouse events and requests and recieves changes from the contro
 NrkbController has
 - NrkbBoard that it receives requests and pushes updates to
 - a Game, which is pretty much an array that stores stuff
-- a Grid, that invokes check() and solve(), both which are able
-  receives requests and pushes updates to its 
+- a Grid, that invokes check() and solve(), both which are able to push updates to the controller
+
 """
 
 import wx
@@ -22,6 +22,7 @@ import sys
 import time
 import nrkb_logic
 import nrkb_fctrl
+from Queue import Queue
 
 WATER = nrkb_logic.WATER
 ISLAND = nrkb_logic.ISLAND
@@ -176,7 +177,7 @@ class NrkbBoard(wx.Panel):
 class HighScores(wx.Dialog):
   def __init__(self, *args, **kwargs):
     kwargs['title'] = 'High Scores'
-    #kwargs['size'] = (325, 225)
+    kwargs['size'] = (400, 225)
     wx.Dialog.__init__(self, *args, **kwargs)
 
     fgs = wx.FlexGridSizer(7, 4, 5, 20)
@@ -215,11 +216,11 @@ class HighScores(wx.Dialog):
     self.Bind(wx.EVT_BUTTON, self.OnClear, clearb)
     vbox = wx.BoxSizer(wx.VERTICAL)
     hbox = wx.BoxSizer(wx.HORIZONTAL)
-    hbox.Add(okb, flag = wx.RIGHT | wx.ALIGN_CENTER, border = 20)
-    hbox.Add(clearb, flag = wx.LEFT | wx.ALIGN_CENTER, border = 20)
-    vbox.Add(fgs, flag = wx.ALL | wx.ALIGN_CENTER_HORIZONTAL, border = 15)
+    hbox.Add(okb, flag = wx.RIGHT | wx.ALIGN_CENTER, border = 15)
+    hbox.Add(clearb, flag = wx.LEFT | wx.ALIGN_CENTER, border = 15)
+    vbox.Add(fgs, flag = wx.ALL | wx.ALIGN_CENTER_HORIZONTAL, border = 10)
     vbox.Add(wx.StaticLine(self, -1, size = (300, 1), style = wx.LI_HORIZONTAL), flag = wx.ALIGN_CENTER)
-    vbox.Add(hbox, flag = wx.ALL | wx.ALIGN_CENTER, border = 15)
+    vbox.Add(hbox, flag = wx.ALL | wx.ALIGN_CENTER, border = 10)
     self.SetSizer(vbox)
     self.Layout()
 
@@ -349,7 +350,7 @@ class NrkbController(wx.Frame):
     info = wx.AboutDialogInfo()
     #info.SetIcon(wx.Icon('xxx.png', wx.BITMAP_TYPE_PNG))
     info.SetName('nrkb')
-    info.SetVersion('1.0')
+    info.SetVersion('1.2')
     info.SetDescription("""A Nurikabe engine and solver.\nBoards from puzzle-nurikabe.com.""")
     info.SetCopyright('(C) 2013')
     info.AddDeveloper('Peter Hung')
@@ -366,6 +367,7 @@ class NrkbController(wx.Frame):
     time_str = str(round(time.time() - self.start, 1))
     state_str = str(self.status)
     self.sb.SetFields([state_str, time_str])
+    self.drawQueue()
   # asks board for its size and resizes frame around it. calibrated for windows 7 aero
   def resize(self):
     width, height = self.board.size
@@ -381,21 +383,23 @@ class NrkbController(wx.Frame):
   # functions that the view calls. changeGame() interacts with the game
   def fetchGame(self, coords):
     return self.game.getState(coords)
-  def changeGame(self, coords, state):
-    if self.status != GameState.SOLVED:
+  def changeGame(self, coords, state, from_queue = False):
+    if self.status != GameState.SOLVED or from_queue:
       changed = self.game.setState(coords, state)
       if changed: 
         self.board.drawSquare(coords, state, False)
   def flagGame(self, coords, state):
     self.board.drawSquare(coords, state, True)
 
-  # when passed a game, updates the owned game to become the other. called by the model
-  def updateGame(self, game = None):
-    if game:
-      for y in range(self.rows):
-        for x in range(self.cols):
-          self.game.board[y][x] = game.board[y][x]
-    self.board.drawBoard()
+  # what the grid calls while it's solving to push changes to be drawn
+  def queueChange(self, coords, state):
+    self.queue.put((coords, state))
+
+  # while solving, the queue will be filled with changes to draw. this handles them
+  def drawQueue(self):
+    while not self.queue.empty():
+      coords, state = self.queue.get()
+      self.changeGame(coords, state, True)
 
   # only functions that interact with the game or grid
   def newGame(self, index = -1):
@@ -403,6 +407,7 @@ class NrkbController(wx.Frame):
       self.stopSolveGame()
     self.game = nrkb_logic.Game(self.rows, self.cols, index)
     self.grid = nrkb_logic.Grid(self.game)
+    self.queue = Queue()
     self.status = GameState.OKAY
     self.disqualified = False
     # if requesting a new board size, destroy old UI
@@ -455,6 +460,7 @@ class NrkbController(wx.Frame):
       wx.BeginBusyCursor()
     self.disqualified = True
     self.grid.solving = True
+    self.queue = Queue()
     solver_thread = threading.Thread(target=self.grid.solve, args = [self])
     solver_thread.daemon = True
     solver_thread.start()
@@ -464,6 +470,13 @@ class NrkbController(wx.Frame):
     if self.grid.solving:
       wx.EndBusyCursor()
     self.grid.solving = False
+    self.drawQueue()
+
+    # resync board if the draw queue messed up earlier, which is actually pretty likely
+    for y in range(self.rows):
+      for x in range(self.cols):
+        self.game.board[y][x] = self.grid.s[y][x].state
+    self.board.drawBoard()
 
 
 # main method!

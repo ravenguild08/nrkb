@@ -29,4 +29,4 @@ if __name__ == '__main__':
   grid = nrkb_logic.Grid(game)
   grid.solving = True
   grid.solve()
-  
+  print str(size)+'x'+str(size), '#'+str(game.index)
