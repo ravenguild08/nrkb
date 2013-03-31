@@ -4,7 +4,7 @@
 nrkb_fctrl.py
 
 peter hung | phung@post.harvard.edu
- 2013-3-18 | 3-29
+ 2013-3-18 | 2013-3-29
 
 implements interactions with board data files, named [rows]x[cols].json
 stores and loads fastest times in a visible json file

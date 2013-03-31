@@ -3,7 +3,7 @@
 """
   nrkb_logic.py
   peter hung | phung@post.harvard.edu
-   2013-3-18 | 2013-3-27
+   2013-3-18 | 2013-3-30
 
   implements game logic of nurikabe.
 

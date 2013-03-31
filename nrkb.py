@@ -3,7 +3,7 @@
 """
 nrkb.py
 peter hung | phung@post.harvard.edu
- 2013-3-18 | 3-29
+ 2013-3-18 | 2013-3-30
 
 implements nurikabe view and controller with wxPython
 
@@ -254,25 +254,32 @@ class NrkbController(wx.Frame):
   def InitUI(self):
     # create file menu
     fileMenu = wx.Menu()
-    newi = fileMenu.Append(wx.ID_NEW, '&New\tF2', 'Start new game')
-    cleari = fileMenu.Append(wx.ID_CLEAR, '&Clear\tF3', 'Clear this game')
-    statisticsi = fileMenu.Append(wx.ID_ANY, '&High Scores\tF4', 'See high scores')  
-    preferencesi = fileMenu.Append(wx.ID_PREFERENCES, '&Preferences\tF5', 'Alter game prefences')  
+    newi = fileMenu.Append(wx.ID_NEW, '&New Game\tF2', 'Start new game')
+    preferencesi = fileMenu.Append(wx.ID_PREFERENCES, '&Change Size\tF5', 'Change game size')
+    for size in [5, 7, 10, 12, 15, 20]:
+      string = str(size) + 'x' + str(size)
+      menui = fileMenu.Append(size, string, 'Change game to ' + string)
+      self.Bind(wx.EVT_MENU, self.OnResize, menui)
     fileMenu.AppendSeparator()
+    statisticsi = fileMenu.Append(wx.ID_ANY, '&High Scores\tF4', 'See high scores')  
     quiti = fileMenu.Append(wx.ID_EXIT, '&Quit\tCtrl+Q', 'Quit application')
+
+    gameMenu = wx.Menu()
+    refreshi = gameMenu.Append(wx.ID_REFRESH, 'Chec&k\tSpace', 'Check this game')
+    cleari = gameMenu.Append(wx.ID_CLEAR, '&Clear\tF3', 'Clear this game')
     
     # create a help menu
     helpMenu = wx.Menu()
     helpi = helpMenu.Append(wx.ID_HELP, '&Help\tF1', 'Instructions')
-    abouti = helpMenu.Append(wx.ID_ABOUT, '&About', 'About Nurikabe')
+    abouti = helpMenu.Append(wx.ID_ABOUT, '&About', 'About nrkb')
     helpMenu.AppendSeparator()
-    refreshi = fileMenu.Append(wx.ID_REFRESH, 'Chec&k\tSpace', 'Check this game')
     solvei = helpMenu.Append(wx.ID_ANY, '&Start Solve\tF9', 'Watch it solve itself')
-    stopi = helpMenu.Append(wx.ID_ANY, '&Kill Solve\tF10', 'Kill the solve')
+    stopi = helpMenu.Append(wx.ID_ANY, '&Kill Solve\tF10', 'Kill the solver')
 
     # create menubar and buttons
     menubar = wx.MenuBar()
     menubar.Append(fileMenu, '&File')
+    menubar.Append(gameMenu, '&Game')
     menubar.Append(helpMenu, '&Help')
     self.SetMenuBar(menubar)
 
@@ -325,16 +332,21 @@ class NrkbController(wx.Frame):
     score_dialog = HighScores(self)
     score_dialog.Show(True)
   # displays size option dialog box, then starts a new game if a new size is selected
+  def OnResize(self, event):    
+    size = event.GetId()
+    self.rows = size
+    self.cols = size
+    self.newGame()
   def OnPreferences(self, event):
-    values = [5, 7, 10, 12, 15, 20]
-    choices = map(lambda x: str(x) + 'x' + str(x), values)
+    sizes = [5, 7, 10, 12, 15, 20]
+    choices = map(lambda x: str(x) + 'x' + str(x), sizes)
     opts = wx.SingleChoiceDialog(self, 'Select a size.', 'Nurikabe Options', choices)
     opts.SetSize((250, 200))
-    opts.SetSelection(values.index(self.rows))
+    opts.SetSelection(sizes.index(self.rows))
     if opts.ShowModal() == wx.ID_OK:
       ix = opts.GetSelection()
-      self.rows = values[ix]
-      self.cols = values[ix]
+      self.rows = sizes[ix]
+      self.cols = sizes[ix]
       self.newGame()
     opts.Destroy()  
   # stops any solves and kills parent thread
@@ -350,11 +362,11 @@ class NrkbController(wx.Frame):
     info = wx.AboutDialogInfo()
     #info.SetIcon(wx.Icon('xxx.png', wx.BITMAP_TYPE_PNG))
     info.SetName('nrkb')
-    info.SetVersion('1.2')
+    info.SetVersion('1.3')
     info.SetDescription("""A Nurikabe engine and solver.\nBoards from puzzle-nurikabe.com.""")
     info.SetCopyright('(C) 2013')
     info.AddDeveloper('Peter Hung')
-    #info.SetWebSite('phung@post.harvard.edu')
+    info.SetWebSite('phung@post.harvard.edu')
     wx.AboutBox(info)
   # called every tenth second, asks status to be updated
   def OnTimer(self, event):
